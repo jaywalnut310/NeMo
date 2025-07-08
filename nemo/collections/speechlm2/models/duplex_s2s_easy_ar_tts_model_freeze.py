@@ -45,7 +45,6 @@ from nemo.collections.speechlm2.parts.pretrained import (
     set_model_dict_for_partial_init,
 )
 from nemo.utils import logging
-from peft import LoraConfig, get_peft_model
 
 
 class DuplexS2SEasyARTTSModel(LightningModule, HFHubMixin):
@@ -214,19 +213,6 @@ class DuplexS2SEasyARTTSModel(LightningModule, HFHubMixin):
                 else:
                     if p.requires_grad:
                         p.requires_grad = False
-        if getattr(cfg.model.speech_decoder, "lora", False):
-            lora_config = LoraConfig(
-                r=8,
-                lora_alpha=16,
-                target_modules=["q", "kv"],
-                lora_dropout=0.05,
-                bias="none",
-            )
-            self.speech_decoder._config = self.speech_decoder.config
-            del self.speech_decoder.config
-            peft_model = get_peft_model(self.speech_decoder, lora_config)
-            self.speech_decoder.config = self.speech_decoder._config
-            self.speech_decoder = peft_model
 
         self._use_fsdp = False
         self._use_tp = False
@@ -241,6 +227,10 @@ class DuplexS2SEasyARTTSModel(LightningModule, HFHubMixin):
                 assert model_state_dict[k].size() == good_ckpt["state_dict"][k].size()
                 model_state_dict[k] = good_ckpt["state_dict"][k]
         self.load_state_dict(model_state_dict)
+
+        for n, p in self.named_parameters():
+            if not n.startswith("speech_decoder."):
+                p.requires_grad = False
 
     @property
     def text_vocab_size(self):
@@ -634,7 +624,6 @@ class DuplexS2SEasyARTTSModel(LightningModule, HFHubMixin):
             )
             # mask audio logits to ignore sequence padding
             audio_loss = forward_outputs["audio_loss"]
-        print(self.cfg.audio_loss_weight)
         loss = (
             self.cfg.text_loss_weight * text_loss
             + self.cfg.audio_loss_weight * audio_loss
@@ -897,7 +886,7 @@ class DuplexS2SEasyARTTSModel(LightningModule, HFHubMixin):
 
             if decode_audio:
                 predicted_audio, predicted_audio_lens = self.audio_codec.decode(
-                    gen_audio, lengths, constrain_value_range=True
+                    gen_audio, lengths
                 )
                 ans["audio"] = predicted_audio.squeeze(1)
                 ans["audio_len"] = predicted_audio_lens
@@ -1192,6 +1181,10 @@ class DuplexS2SEasyARIOModel(LightningModule, HFHubMixin):
                 assert model_state_dict[k].size() == good_ckpt["state_dict"][k].size()
                 model_state_dict[k] = good_ckpt["state_dict"][k]
         self.load_state_dict(model_state_dict)
+
+        for n, p in self.named_parameters():
+            if not (n.startswith("speech_decoder.") or n.startswith("perception_")):
+                p.requires_grad = False
 
     @property
     def text_vocab_size(self):
@@ -1611,7 +1604,6 @@ class DuplexS2SEasyARIOModel(LightningModule, HFHubMixin):
             )
             # mask audio logits to ignore sequence padding
             audio_loss = forward_outputs["audio_loss"]
-        print(self.cfg.audio_loss_weight)
         loss = (
             self.cfg.text_loss_weight * text_loss
             + self.cfg.audio_loss_weight * audio_loss
@@ -1653,7 +1645,6 @@ class DuplexS2SEasyARIOModel(LightningModule, HFHubMixin):
         for name, dataset_batch in batch.items():
             if dataset_batch is None:
                 continue  # some dataset is exhausted
-
             with torch.no_grad():
                 ans = self.training_step(dataset_batch, batch_idx)
                 print("val", ans["loss"], ans["text_loss"], ans["audio_loss"])
@@ -1878,7 +1869,7 @@ class DuplexS2SEasyARIOModel(LightningModule, HFHubMixin):
 
             if decode_audio:
                 predicted_audio, predicted_audio_lens = self.audio_codec.decode(
-                    gen_audio, lengths, constrain_value_range=True
+                    gen_audio, lengths
                 )
                 ans["audio"] = predicted_audio.squeeze(1)
                 ans["audio_len"] = predicted_audio_lens
