@@ -1323,10 +1323,12 @@ class ProbabilisticVQ(nn.Module):
             return ids_sel, z - r
         return ids_sel
 
-    def decode(self, ids_sel: list[Tensor]) -> Tensor:
+    def decode(self, ids_sel: list[Tensor], include_blank: bool = True) -> Tensor:
         z = torch.zeros((*ids_sel[0].size(), self.channels), device=ids_sel[0].device)
         for i in range(len(ids_sel)):
             mus = self.mus_list[i]
+            if include_blank:
+                mus = F.pad(mus, [0, 0, 0, 1])
             z = z + F.embedding(ids_sel[i], mus)
         return z  # [b, ?, h]
 
@@ -2263,13 +2265,14 @@ class RVQVAE(nn.Module):
         constrain_value_range: bool = False,
         cache: CausalConv1dCache | None = None,
         flush: bool = False,
+        include_blank: bool = True,
     ) -> tuple[Tensor, Tensor | None]:
         ids_sel = [x.squeeze(-1) for x in torch.split(code, 1, -1)]
         z_mask: Tensor | None = None
         if code_len is not None:
             z_mask = sequence_mask(code_len).unsqueeze(1)
 
-        z_q = self.prvq.decode(ids_sel).transpose(1, 2)
+        z_q = self.prvq.decode(ids_sel, include_blank=include_blank).transpose(1, 2)
         x_hat, mask = self.ae_decode(
             z_q,
             z_mask,
